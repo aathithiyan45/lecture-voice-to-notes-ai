@@ -15,4 +15,4 @@ This project is an AI-based prototype system that converts recorded lecture audi
 - Simple and user-friendly interface
 
 ## Note
-This is a prototype-level academic project developed as part of an IDM / AICTE internship.  
+This is a prototype-level academic project developed as part of an IDM / AICTE internship..
