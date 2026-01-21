@@ -15,6 +15,7 @@ st.set_page_config(
     layout="centered"
 )
 
+
 # ---------------------------
 # LOAD AI MODELS (cached)
 # ---------------------------
@@ -24,8 +25,8 @@ def load_summarizer():
 
 @st.cache_resource
 def load_generator():
-    # For quiz/flashcard generation
-    return pipeline("text2text-generation", model="google/flan-t5-base")
+    # Smaller model = faster on M1, less download
+    return pipeline("text2text-generation", model="google/flan-t5-small")
 
 summarizer = load_summarizer()
 generator = load_generator()
@@ -35,8 +36,13 @@ generator = load_generator()
 # AUDIO CONVERSION
 # ---------------------------
 def convert_to_wav(input_path: str) -> str:
+    """
+    Converts any audio format supported by ffmpeg/pydub to
+    16kHz mono PCM wav for SpeechRecognition.
+    """
     sound = AudioSegment.from_file(input_path)
     sound = sound.set_channels(1).set_frame_rate(16000)
+
     output_path = os.path.join(os.path.dirname(input_path), "converted.wav")
     sound.export(output_path, format="wav")
     return output_path
@@ -62,7 +68,7 @@ def speech_to_text(audio_path: str) -> str:
 
 
 # ---------------------------
-# SUMMARIZATION
+# SUMMARIZATION (NOTES)
 # ---------------------------
 def summarize_text(text: str) -> str:
     words = text.split()
@@ -74,7 +80,16 @@ def summarize_text(text: str) -> str:
 
     summaries = []
     for chunk in chunks:
-        out = summarizer(chunk, max_length=130, min_length=50, do_sample=False)
+        # dynamic lengths to avoid warnings
+        chunk_words = len(chunk.split())
+        max_len = min(120, max(40, chunk_words // 2))
+
+        out = summarizer(
+            chunk,
+            max_length=max_len,
+            min_length=30,
+            do_sample=False
+        )
         summaries.append(out[0]["summary_text"])
 
     return "\n\n".join(summaries)
@@ -85,53 +100,63 @@ def summarize_text(text: str) -> str:
 # ---------------------------
 def generate_mcqs(notes: str, n=5) -> str:
     prompt = f"""
-Generate {n} multiple-choice questions (MCQs) from the below notes.
-Format exactly like this:
+You are an exam question generator.
 
-Q1) Question?
-A) option
-B) option
-C) option
-D) option
-Answer: A
+Generate {n} MCQ questions from the notes.
+Each question MUST follow this exact format:
+
+Q1. <question>
+A. <option>
+B. <option>
+C. <option>
+D. <option>
+Answer: <A/B/C/D>
 
 NOTES:
 {notes}
 """
-    out = generator(prompt, max_length=512, do_sample=False)
-    return out[0]["generated_text"]
+    out = generator(prompt, max_new_tokens=256, do_sample=False)
+    text = out[0]["generated_text"]
+
+    # formatting improvement
+    text = text.replace("Q", "\nQ").strip()
+    return text
+
 
 def generate_true_false(notes: str, n=5) -> str:
     prompt = f"""
 Generate {n} True/False questions from the notes.
-Format:
+Format exactly:
 
-1) Statement - True/False: __
+1. <statement>
+Answer: True/False
 
 NOTES:
 {notes}
 """
-    out = generator(prompt, max_length=512, do_sample=False)
-    return out[0]["generated_text"]
+    out = generator(prompt, max_new_tokens=256, do_sample=False)
+    return out[0]["generated_text"].strip()
+
 
 def generate_one_mark(notes: str, n=5) -> str:
     prompt = f"""
-Generate {n} one-mark questions from the notes (short answer questions).
+Generate {n} one-mark (short answer) questions from the notes.
 Format:
 
-1) Question?
+1. Question?
 Answer: ...
 
 NOTES:
 {notes}
 """
-    out = generator(prompt, max_length=512, do_sample=False)
-    return out[0]["generated_text"]
+    out = generator(prompt, max_new_tokens=256, do_sample=False)
+    return out[0]["generated_text"].strip()
+
 
 def generate_flashcards(notes: str, n=5) -> str:
     prompt = f"""
 Create {n} flashcards from the notes.
-Format:
+Format exactly:
 
 Card 1:
 Front: ...
@@ -140,8 +165,8 @@ Back: ...
 NOTES:
 {notes}
 """
-    out = generator(prompt, max_length=512, do_sample=False)
-    return out[0]["generated_text"]
+    out = generator(prompt, max_new_tokens=256, do_sample=False)
+    return out[0]["generated_text"].strip()
 
 
 # ---------------------------
@@ -184,8 +209,9 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-        # Quiz + Flashcards Section
+        # Quiz + Flashcards
         st.subheader("🧠 Quiz & Flashcards (AI Generated)")
+        st.caption("Choose a feature to generate practice materials for revision.")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -198,26 +224,30 @@ if uploaded_file is not None:
         if mcq_btn:
             st.info("⏳ Generating MCQs...")
             mcqs = generate_mcqs(notes, n=5)
-            st.text_area("✅ MCQs", mcqs, height=300)
+            st.subheader("✅ MCQs")
+            st.code(mcqs)
 
         if tf_btn:
             st.info("⏳ Generating True/False...")
             tf = generate_true_false(notes, n=5)
-            st.text_area("✅ True/False", tf, height=250)
+            st.subheader("✅ True/False")
+            st.code(tf)
 
         if one_btn:
             st.info("⏳ Generating One-Mark Questions...")
             one = generate_one_mark(notes, n=5)
-            st.text_area("✅ One-Mark Questions", one, height=250)
+            st.subheader("✅ One-Mark Questions")
+            st.code(one)
 
         if flash_btn:
             st.info("⏳ Generating Flashcards...")
             flash = generate_flashcards(notes, n=5)
-            st.text_area("✅ Flashcards", flash, height=300)
+            st.subheader("✅ Flashcards")
+            st.code(flash)
 
         st.markdown("---")
 
-        # Download outputs
+        # Downloads
         st.subheader("⬇️ Download Outputs")
 
         st.download_button(
